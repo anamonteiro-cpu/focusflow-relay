@@ -21,7 +21,7 @@
       error: params.get('error')
     };
     if (window.opener) {
-      window.opener.postMessage(payload, 'https://work.toqan.ai');
+      window.opener.postMessage(payload, '*');
       document.querySelector('p').textContent = '✅ Conectado! Esta aba vai fechar...';
       setTimeout(() => window.close(), 1500);
     } else {
