@@ -1,32 +1,214 @@
 <!DOCTYPE html>
-<html>
+<html lang="pt-BR">
 <head>
   <meta charset="utf-8">
-  <title>FocusFlow Auth Relay</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FocusFlow — Agendar reunião</title>
   <style>
-    body { font-family: sans-serif; background: #0f1117; color: #e2e8f0;
-           display: flex; align-items: center; justify-content: center;
-           height: 100vh; margin: 0; text-align: center; }
-    p { font-size: 18px; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+           background: #0f1117; color: #e2e8f0; min-height: 100vh;
+           display: flex; align-items: flex-start; justify-content: center; padding: 32px 16px; }
+    .container { max-width: 480px; width: 100%; }
+    .header { text-align: center; margin-bottom: 32px; }
+    .header h1 { font-size: 22px; margin-bottom: 4px; }
+    .header p { color: #94a3b8; font-size: 14px; }
+    .duration-badge { display: inline-block; background: #1e2235; border: 1px solid #2a2d3e;
+                      border-radius: 20px; padding: 4px 12px; font-size: 12px; color: #94a3b8; margin-top: 8px; }
+    .section-title { font-size: 11px; font-weight: 700; color: #64748b; letter-spacing: 0.08em;
+                     text-transform: uppercase; margin-bottom: 12px; }
+    .day-group { margin-bottom: 20px; }
+    .day-label { font-size: 13px; font-weight: 600; color: #e2e8f0; margin-bottom: 8px;
+                 padding-bottom: 4px; border-bottom: 1px solid #2a2d3e; }
+    .slots-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .slot-btn { background: #1a1d27; border: 1px solid #2a2d3e; color: #e2e8f0;
+                border-radius: 8px; padding: 10px 8px; font-size: 13px; cursor: pointer;
+                transition: all 0.15s; text-align: center; }
+    .slot-btn:hover { background: #22273a; border-color: #4f8ef7; color: #4f8ef7; }
+    .slot-btn.selected { background: #4f8ef7; border-color: #4f8ef7; color: #fff; font-weight: 600; }
+    .booking-form { background: #1a1d27; border: 1px solid #2a2d3e; border-radius: 12px;
+                    padding: 20px; margin-top: 24px; display: none; }
+    .booking-form.visible { display: block; }
+    .selected-info { background: #0f3a2a; border: 1px solid #22c55e; border-radius: 8px;
+                     padding: 10px 14px; margin-bottom: 16px; font-size: 13px; color: #22c55e; }
+    .form-field { margin-bottom: 14px; }
+    .form-field label { display: block; font-size: 12px; color: #94a3b8; margin-bottom: 4px; }
+    .form-field input { width: 100%; background: #0f1117; border: 1px solid #2a2d3e;
+                        border-radius: 6px; padding: 8px 12px; color: #e2e8f0; font-size: 14px; }
+    .form-field input:focus { outline: none; border-color: #4f8ef7; }
+    .btn-book { width: 100%; background: #22c55e; color: #fff; border: none;
+                border-radius: 8px; padding: 12px; font-size: 15px; font-weight: 600;
+                cursor: pointer; margin-top: 8px; }
+    .btn-book:hover { background: #16a34a; }
+    .empty-msg { text-align: center; color: #64748b; padding: 40px 0; font-size: 14px; }
+    .error-msg { text-align: center; color: #ef4444; padding: 40px 0; font-size: 14px; }
+    .brand { text-align: center; margin-top: 32px; font-size: 12px; color: #4b5563; }
+    .brand a { color: #4b5563; text-decoration: none; }
   </style>
 </head>
 <body>
-  <p>🔄 Conectando ao FocusFlow...</p>
-  <script>
-    const params = new URLSearchParams(window.location.search);
-    const payload = {
-      type:  'focusflow_oauth',
-      code:  params.get('code'),
-      state: params.get('state'),
-      error: params.get('error')
-    };
-    if (window.opener) {
-      window.opener.postMessage(payload, '*');
-      document.querySelector('p').textContent = '✅ Conectado! Esta aba vai fechar...';
-      setTimeout(() => window.close(), 1500);
-    } else {
-      document.querySelector('p').textContent = '❌ Abra esta página a partir do FocusFlow.';
-    }
-  </script>
+<div class="container">
+  <div id="app-content">
+    <div class="empty-msg">Carregando disponibilidade...</div>
+  </div>
+  <div class="brand">Powered by <a href="#">✨ FocusFlow</a></div>
+</div>
+
+<script>
+// ── Utilitários
+function b64decode(str) {
+  try { return JSON.parse(atob(str.replace(/-/g,'+').replace(/_/g,'/').replace(/ /g,''))); }
+  catch(e) { return null; }
+}
+
+function formatDate(dateStr) {
+  const d = new Date(dateStr + 'T12:00:00');
+  return d.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' });
+}
+
+function formatTime(timeStr) {
+  return timeStr.slice(0,5);
+}
+
+// ── Estado
+let selectedSlot = null;
+let bookingData  = null;
+
+// ── Inicialização
+const params = new URLSearchParams(window.location.search);
+const code   = params.get('code');
+const state  = params.get('state');
+const error  = params.get('error');
+const book   = params.get('book');
+
+if (code || state || error) {
+  // Modo relay OAuth (comportamento original)
+  const payload = { type: 'focusflow_oauth', code, state, error };
+  if (window.opener) {
+    window.opener.postMessage(payload, '*');
+    document.getElementById('app-content').innerHTML =
+      '<div style="text-align:center;padding:80px 0"><div style="font-size:48px;margin-bottom:16px">✅</div><h2>Conectado com sucesso!</h2><p style="color:#94a3b8;margin-top:8px">Esta aba vai fechar automaticamente...</p></div>';
+    setTimeout(() => window.close(), 1500);
+  } else {
+    document.getElementById('app-content').innerHTML =
+      '<div class="error-msg">❌ Abra esta página a partir do FocusFlow.</div>';
+  }
+} else if (book) {
+  // Modo agendamento
+  bookingData = b64decode(book);
+  if (!bookingData) {
+    document.getElementById('app-content').innerHTML =
+      '<div class="error-msg">❌ Link de agendamento inválido ou expirado.</div>';
+  } else {
+    renderBookingPage(bookingData);
+  }
+} else {
+  document.getElementById('app-content').innerHTML =
+    '<div class="empty-msg">🔄 Conectando ao FocusFlow...</div>';
+}
+
+// ── Renderizar página de agendamento
+function renderBookingPage(data) {
+  const { title, organizer, duration_minutes, slots, timezone } = data;
+  const grouped = {};
+  (slots || []).forEach(slot => {
+    const d = slot.date;
+    if (!grouped[d]) grouped[d] = [];
+    grouped[d].push(slot);
+  });
+
+  let html = `
+    <div class="header">
+      <h1>${title || 'Agendar reunião'}</h1>
+      <p>com ${organizer || 'FocusFlow'}</p>
+      <div class="duration-badge">⏱ ${duration_minutes || 30} minutos</div>
+    </div>`;
+
+  if (!slots || slots.length === 0) {
+    html += '<div class="empty-msg">Nenhum horário disponível no momento.<br>Tente novamente mais tarde.</div>';
+  } else {
+    html += '<div class="section-title">Selecione um horário</div>';
+    Object.entries(grouped).sort().forEach(([date, daySlots]) => {
+      html += `<div class="day-group">
+        <div class="day-label">${formatDate(date)}</div>
+        <div class="slots-grid">`;
+      daySlots.forEach(slot => {
+        html += `<button class="slot-btn" onclick="selectSlot('${slot.date}', '${slot.start}', '${slot.end}', this)">
+          ${formatTime(slot.start)}
+        </button>`;
+      });
+      html += '</div></div>';
+    });
+  }
+
+  html += `
+    <div class="booking-form" id="booking-form">
+      <div class="selected-info" id="selected-info">✓ Horário selecionado</div>
+      <div class="section-title">Seus dados</div>
+      <div class="form-field">
+        <label>Seu nome *</label>
+        <input type="text" id="guest-name" placeholder="Ana Silva" required>
+      </div>
+      <div class="form-field">
+        <label>Seu e-mail *</label>
+        <input type="email" id="guest-email" placeholder="ana@empresa.com" required>
+      </div>
+      <div class="form-field">
+        <label>Observação (opcional)</label>
+        <input type="text" id="guest-note" placeholder="Sobre o que gostaria de conversar?">
+      </div>
+      <button class="btn-book" onclick="bookSlot()">📅 Adicionar ao Google Calendar</button>
+    </div>`;
+
+  document.getElementById('app-content').innerHTML = html;
+}
+
+function selectSlot(date, start, end, btn) {
+  document.querySelectorAll('.slot-btn').forEach(b => b.classList.remove('selected'));
+  btn.classList.add('selected');
+  selectedSlot = { date, start, end };
+
+  const startDT = `${date}T${start}:00`;
+  const d = new Date(startDT);
+  const label = d.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })
+    + ' às ' + start.slice(0,5);
+  document.getElementById('selected-info').textContent = `✓ ${label}`;
+  document.getElementById('booking-form').classList.add('visible');
+}
+
+function bookSlot() {
+  const name  = document.getElementById('guest-name').value.trim();
+  const email = document.getElementById('guest-email').value.trim();
+  const note  = document.getElementById('guest-note').value.trim();
+
+  if (!name || !email || !selectedSlot) {
+    alert('Preencha seu nome e e-mail para continuar.');
+    return;
+  }
+  if (!email.includes('@')) {
+    alert('E-mail inválido.');
+    return;
+  }
+
+  const { date, start, end } = selectedSlot;
+  const data = bookingData;
+
+  // Formatar datas para Google Calendar (YYYYMMDDTHHmmss)
+  const fmt = (dateStr, timeStr) =>
+    (dateStr + 'T' + timeStr + ':00').replace(/[-:]/g, '').slice(0,15);
+
+  const gcalStart = fmt(date, start);
+  const gcalEnd   = fmt(date, end);
+
+  const title   = encodeURIComponent(`${data.title || 'Reunião'} — ${name}`);
+  const details = encodeURIComponent(`Agendado via FocusFlow\n\nParticipante: ${name} (${email})${note ? '\n\nObservação: ' + note : ''}`);
+  const guests  = encodeURIComponent(email);
+
+  const gcalUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE` +
+    `&text=${title}&dates=${gcalStart}/${gcalEnd}&details=${details}&add=${guests}`;
+
+  window.open(gcalUrl, '_blank');
+}
+</script>
 </body>
 </html>
